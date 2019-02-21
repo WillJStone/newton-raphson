@@ -309,3 +309,76 @@ def logistic_regression(X, y, intercept=True, robust=False, toliter=10000, tolx=
         res.summary()
 
     return res
+
+def logistic_regression_lite(X, y, intercept=True, robust=False, toliter=10000,
+                            tolx=1e-12,
+                            tolgrad=1e-12, verbose=0):
+    """
+    Runs logistic regression model with fewer bells and whistles.
+
+    Parameters
+    ----------
+    X : ndarray((nsamples, nfeatures))
+        The independent variables. Features must be column vectors.
+    y : ndarray(nsamples)
+        The response variables
+    intercept : bool
+        Whether to add an intercept (bias) term
+    robust: bool
+        Whether to use Huber-White sandwich estimator
+    toliter : int (default=10000)
+        Maximum number of iterations allowed
+    tolx : float (default=1e-12)
+        Minimum l2-norm of the change in parameter estimates across iterations
+    tolgrad : float (default=1e-12)
+        Minimum l2-norm of the gradient at each iteration.
+    verbose : {0, 1, 2, 3}
+        Verbosity level.
+            0 = No output
+            1 = Termination message only
+            2 = Termination message and output for each iteration
+            3 = Messages for 1 & 2, and printout of summary statistics
+
+    Returns
+    -------
+    coefs, t_stats, p_vals
+
+    Notes
+    -----
+    While the gradient is not used for the optimization itself, we include it in order to potentially use it as a stopping criterion.
+    """
+
+    X  = add_intercept_column_to_feature_matrix(X) if intercept is True else X
+    XT = X.T # Precompute transpose(X) for efficiency
+    x  = initialize_parameters(n=X.shape[1])
+    k  = 0; done = False
+    while not done:
+        oldx = x
+        yhat = f_logistic(X, x)
+        g    = XT@(y-yhat)      # Gradient at current point
+        glen = norm(g)**2       # Length of gradient vector at current point
+        J    = negative_log_likelihood(y, yhat)
+        H, s = compute_hessian(X, XT, y, yhat)
+        C    = inverse(H)
+        x    = x - C@s
+        k    += 1
+        dx   = norm(x-oldx)**2  # Change in iterate
+        done, msg = convergence_test(k,dx,J,glen,toliter,tolx,tolgrad,verbose)
+
+
+    # Huber-White Sandwich Estimator
+    g = np.stack(X[i]*(y[i] - 1/(1+np.exp(-X[i]@x))) for i in range(X.shape[0]))
+    Ainv = np.linalg.pinv(-H)
+    B = g.T@g
+    V = Ainv@(B@Ainv)
+
+    # Save results
+    coefs = x
+    if robust:
+        se = np.sqrt(np.diag(V))
+    else:
+        se = np.sqrt(np.diag(C))
+    t_stats = coefs/se
+    p_coefs = 1 - stats.chi2.cdf(t_stats**2, 1)
+
+    return coefs, t_stats, p_coefs
